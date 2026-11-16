@@ -1,24 +1,33 @@
 # UGREEN NAS Widget for Scriptable
 
-An iOS home-screen widget that shows live stats from a UGREEN NAS (UGOS): CPU, RAM, disk usage, temperatures, uptime, network speed and running Docker containers. It comes in three sizes, small (2×2), medium (4×2) and large (4×4), with frosted glass tiles and segmented meters that turn amber and red as load rises.
+**Version 1.0.0**
+
+An iOS widget that shows live stats from a UGREEN NAS (UGOS): CPU, RAM, disk usage, temperatures, uptime, network speed and running Docker containers. It comes in three home-screen sizes, small (2×2), medium (4×2) and large (4×4), plus lock-screen widgets. It uses frosted glass tiles and segmented meters that turn amber and red as load rises.
 
 It reads data from [Glances](https://nicolargo.github.io/glances/), a small monitoring tool you run in Docker on the NAS. UGOS has no documented stats API, so Glances is the bridge.
 
 | Size | What you get |
 |---|---|
 | Small | Uptime and Docker pills, plus CPU / RAM / DISK / TEMP tiles |
-| Medium | Header with uptime and Docker pills, four tiles with detail lines (cores, used/total), network speed footer |
-| Large | Same tiles in a 2×2 grid, a per-sensor temperature card, network speed footer |
+| Medium | Online status and Docker pills, four tiles with detail lines (cores, used/total), footer with network speed and full uptime (`up 271d 22h 25m 18s`) |
+| Large | Same tiles in a 2×2 grid, a temperature list, a 12-hour CPU/RAM trend graph, a Docker summary listing containers that are down, footer with network speed and uptime |
+| Lock screen | Circular gauge (CPU, RAM, disk or temp), a three-line rectangular widget, and a one-line inline widget |
+
+**Features**
+- **Works offline-ish:** if the NAS can't be reached, the widget shows the last good reading with a `⏱ 12m ago` pill instead of going blank.
+- **Alert marks as well as colours:** `▲` at the warning level and `‼` at critical, so warnings still show when iOS strips colour from tinted or clear widgets.
+- **Per-widget settings** through the widget's Parameter field, so you can run several widgets for different NAS units without editing the script.
+- **Tap links** for the disk tile and Docker pill (see [Configuration](#configuration)).
 
 ## Screenshots
 
 | Small (2×2) | Medium (4×2) |
 |---|---|
-| <img src="images/small.jpg" width="260" alt="Small widget"> | <img src="images/medium.jpg" width="420" alt="Medium widget"> |
+| <img src="images/small.png" width="260" alt="Small widget"> | <img src="images/medium.png" width="420" alt="Medium widget"> |
 
 **Large (4×4)**
 
-<img src="images/large.jpg" width="420" alt="Large widget">
+<img src="images/large.webp" width="420" alt="Large widget">
 
 > Tested on a UGREEN DH2300 (ARM). Sensor names differ between models; see [Troubleshooting](#troubleshooting).
 
@@ -95,12 +104,49 @@ All settings are in the `CONFIG` block at the top of the script.
 | `volumes` | `["/volume1"]` | Mount points counted in the DISK tile |
 | `warn`, `crit` | `70`, `90` | Percent at which meters turn amber and red |
 | `tempWarn`, `tempCrit` | `65`, `80` | Temperature (°C) thresholds; the TEMP meter fills toward `tempCrit` |
-| `preview` | `"medium"` | Size shown when you run the script inside Scriptable |
+| `historyHours` | `12` | How much history the large widget's trend graph keeps |
+| `metric` | `"cpu"` | What the circular lock-screen widget shows: `cpu`, `ram`, `disk` or `temp` |
+| `links` | `{ storage: "", docker: "" }` | URLs opened when you tap the DISK tile or the Docker pill (medium/large). Empty means the Glances page |
+| `preview` | `"medium"` | What you see when you run the script inside Scriptable: `small`, `medium`, `large`, `circular`, `rectangular` or `inline` |
 | `sizeOverride` | `null` | Real widget sizes in points, if tiles look clipped (see below) |
+
+### Widget Parameter (per-widget settings)
+
+Long-press a widget → **Edit Widget** → **Parameter**, and enter settings as `key=value` pairs separated by semicolons:
+
+```
+url=http://100.64.0.5:61208; name=Home NAS; metric=ram; volumes=/volume1,/volume2
+```
+
+Supported keys: `url`, `name`, `user`, `pass`, `metric`, `volumes`. These override the values in `CONFIG` for that widget only. Anything stored in a Parameter is visible in your widget settings, so prefer editing the script for passwords.
+
+### Lock-screen widgets
+
+Add a Scriptable widget to the lock screen, choose this script, and pick the circular, rectangular or inline style. Lock-screen widgets are single-colour, so alerts show as `▲` and `‼` marks. For a circular widget showing RAM, set the Parameter to `metric=ram`.
+
+### Drive temperatures (experimental)
+
+Glances doesn't report drive temperatures on every NAS. Its optional SMART plugin can, and the widget reads `/api/4/smart` if it exists. To try it, recreate the container with the plugin enabled and access to the drives:
+
+```bash
+sudo docker run -d --name glances --restart unless-stopped \
+  -p 61208:61208 \
+  -e GLANCES_OPT="-w --enable-plugin smart" \
+  --pid host --privileged \
+  -v /volume1:/volume1:ro \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  nicolargo/glances:latest-full
+```
+
+Then check `http://NAS-IP:61208/api/4/smart` returns your drives. This is untested on UGOS and `--privileged` gives the container broad access to the NAS, so only use it if you're comfortable with that. If the endpoint stays empty, the widget simply leaves the drive temperature out.
 
 ## Troubleshooting
 
-**Widget says OFFLINE or "connection refused".** Nothing is answering at `baseUrl`. Check that the container is running (`sudo docker ps`), that the port matches, and, away from home, that Tailscale is on.
+**Widget says "Setup needed".** `baseUrl` still has the placeholder. Set it in the script or in the widget's Parameter (`url=http://IP:61208`).
+
+**Widget says OFFLINE or "connection refused".** Nothing is answering at `baseUrl`. Check that the container is running (`sudo docker ps`), that the port matches, and, away from home, that Tailscale is on. If the widget has loaded successfully before, it shows the last reading with a `⏱` age pill instead of OFFLINE.
+
+**The trend graph says "Collecting data…".** It needs a few readings, which are recorded each time a widget refreshes (roughly every 5 to 15 minutes). The history is stored inside Scriptable on the phone.
 
 **No Docker pill.** Glances can't see Docker. Recreate the container with the `docker.sock` volume above, then check `/api/4/containers` returns a list. A container whose status is `unhealthy` or stopped is not counted as running.
 
@@ -119,6 +165,10 @@ sizeOverride: { small: [158, 158], medium: [338, 158], large: [338, 354] },
 ## Privacy
 
 The widget talks only to the address you set in `baseUrl`. Don't commit your real IP, Tailscale address or Glances password if you fork this repo.
+
+## License
+
+MIT © 2026 Matt Aaron Magnaye. See [LICENSE](LICENSE).
 
 ## Credits
 
